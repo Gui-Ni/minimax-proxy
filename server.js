@@ -10,6 +10,9 @@ app.use(express.json({ limit: '50mb' }));
 // 你的 MiniMax API Key
 const API_KEY = 'sk-cp-RAsaqP2lsUH0DRgFFuOOr0U8gs1vwqU7tapLF6OXZ-oceDctsRhPLHI0b5BstIbCe4CS_2Z9JWSKT3SitkOtYFGR0DbzJE_FqAvaE9zpTUFV0-xjfBxemwc';
 
+// Deepgram API Key (免费版)
+const DEEPGRAM_KEY = '672a640148208ea1211fcf94b86d0287d5c6a02c';
+
 app.post('/chat', async (req, res) => {
   try {
     const { messages, model = 'abab6.5s-chat' } = req.body;
@@ -38,7 +41,7 @@ app.post('/chat', async (req, res) => {
   }
 });
 
-// 语音识别接口 - 使用 OpenAI Whisper
+// 语音识别接口 - 使用 Deepgram (免费250分钟/月)
 app.post('/voice', async (req, res) => {
   try {
     const { audio } = req.body;
@@ -51,25 +54,26 @@ app.post('/voice', async (req, res) => {
     const base64Data = audio.replace(/^data:audio\/\w+;base64,/, '');
     const audioBuffer = Buffer.from(base64Data, 'base64');
 
-    // 使用 OpenAI Whisper API
+    // 使用 Deepgram Nova-2 模型 (支持中文)
     const formData = new FormData();
-    formData.append('file', audioBuffer, { filename: 'audio.webm', contentType: 'audio/webm' });
-    formData.append('model', 'whisper-1');
+    formData.append('audio', audioBuffer, { filename: 'audio.webm', contentType: 'audio/webm' });
+    formData.append('model', 'nova-2');
     formData.append('language', 'zh');
 
     const response = await axios.post(
-      'https://api.openai.com/v1/audio/transcriptions',
+      'https://api.deepgram.com/v1/listen',
       formData,
       {
         headers: {
           ...formData.getHeaders(),
-          'Authorization': `Bearer ${process.env.OPENAI_API_KEY || API_KEY}`
+          'Authorization': `Token ${DEEPGRAM_KEY}`
         },
         timeout: 60000
       }
     );
 
-    res.json({ text: response.data.text });
+    const text = response.data.results?.channels[0]?.alternatives[0]?.transcript || '';
+    res.json({ text });
   } catch (error) {
     console.error('Voice Error:', error.message);
     res.status(500).json({ 
