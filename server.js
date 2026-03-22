@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const FormData = require('form-data');
 
 const app = express();
 app.use(cors());
@@ -10,8 +9,51 @@ app.use(express.json({ limit: '50mb' }));
 // 你的 MiniMax API Key
 const API_KEY = 'sk-cp-RAsaqP2lsUH0DRgFFuOOr0U8gs1vwqU7tapLF6OXZ-oceDctsRhPLHI0b5BstIbCe4CS_2Z9JWSKT3SitkOtYFGR0DbzJE_FqAvaE9zpTUFV0-xjfBxemwc';
 
-// Deepgram API Key (免费版)
-const DEEPGRAM_KEY = '672a640148208ea1211fcf94b86d0287d5c6a02c';
+// 阿里云语音识别配置 (从环境变量读取)
+const ALIYUN = {
+  accessKeyId: process.env.ALIYUN_ACCESS_KEY_ID || '',
+  accessKeySecret: process.env.ALIYUN_ACCESS_KEY_SECRET || '',
+  appkey: process.env.ALIYUN_APP_KEY || 'ms9j1Kk6QTlp31JV'
+};
+
+// 缓存 token
+let tokenCache = { token: null, expires: 0 };
+
+// 获取阿里云 token
+async function getAliyunToken() {
+  if (tokenCache.token && Date.now() < tokenCache.expires) {
+    return tokenCache.token;
+  }
+
+  try {
+    const response = await axios.post(
+      'https://nls-meta.cn-shanghai.aliyuncs.com/',
+      new URLSearchParams({
+        Action: 'CreateToken',
+        Version: '2019-02-28',
+        Format: 'JSON',
+        AccessKeyId: ALIYUN.accessKeyId,
+        SignatureMethod: 'HMAC-SHA1',
+        Timestamp: new Date().toISOString(),
+        SignatureVersion: '1.0',
+        SignatureNonce: Math.random().toString()
+      }),
+      {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      }
+    );
+
+    if (response.data.Token?.Id) {
+      tokenCache.token = response.data.Token.Id;
+      tokenCache.expires = Date.now() + 24 * 60 * 60 * 1000;
+      return tokenCache.token;
+    }
+    throw new Error('Failed to get token');
+  } catch (error) {
+    console.error('Get token error:', error.message);
+    throw error;
+  }
+}
 
 app.post('/chat', async (req, res) => {
   try {
@@ -41,7 +83,7 @@ app.post('/chat', async (req, res) => {
   }
 });
 
-// 语音识别接口 - 使用 Deepgram (免费250分钟/月)
+// 阿里云语音识别
 app.post('/voice', async (req, res) => {
   try {
     const { audio } = req.body;
@@ -50,35 +92,36 @@ app.post('/voice', async (req, res) => {
       return res.status(400).json({ error: 'No audio provided' });
     }
 
-    // 将 base64 音频转换为 buffer
     const base64Data = audio.replace(/^data:audio\/\w+;base64,/, '');
     const audioBuffer = Buffer.from(base64Data, 'base64');
 
     console.log("Received audio, size:", audioBuffer.length);
 
-    // 使用 Deepgram Nova-2 模型 (支持中文)
-    const formData = new FormData();
-    formData.append('audio', audioBuffer, { filename: 'audio.webm', contentType: 'audio/webm' });
-    formData.append('model', 'nova-2');
-    formData.append('language', 'zh');
-    formData.append('punctuate', 'true');
-    formData.append('diarize', 'false');
+    const token = await getAliyunToken();
+    console.log("Got token:", token);
 
     const response = await axios.post(
-      'https://api.deepgram.com/v1/listen',
-      formData,
+      'https://nls-gateway-cn-shanghai.aliyuncs.com/stream/v1/asr',
+      audioBuffer,
       {
-        headers: {
-          ...formData.getHeaders(),
-          'Authorization': `Token ${DEEPGRAM_KEY}`
+        params: {
+          appkey: ALIYUN.appkey,
+          token: token,
+          format: 'webm',
+          sample_rate: 16000,
+          charset: 3,
+          enable_itn: true
         },
-        timeout: 60000
+        headers: {
+          'Content-Type': 'audio/webm;codecs=opus',
+          'X-NLS-Token': token
+        },
+        timeout: 30000
       }
     );
 
-    console.log("Deepgram response:", JSON.stringify(response.data));
-    const text = response.data.results?.channels[0]?.alternatives[0]?.transcript || '';
-    console.log("Transcribed text:", text);
+    console.log("Aliyun response:", response.data);
+    const text = response.data?.result || '';
     res.json({ text });
   } catch (error) {
     console.error('Voice Error:', error.message);
