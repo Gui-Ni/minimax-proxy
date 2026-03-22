@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
+const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
@@ -16,44 +17,40 @@ const ALIYUN = {
 
 let tokenCache = { token: null, expires: 0 };
 
-// 获取阿里云 Access Token
+// 正确的获取 Token 方式
 async function getAccessToken() {
   if (tokenCache.token && Date.now() < tokenCache.expires) {
     return tokenCache.token;
   }
 
   try {
+    // 阿里云 NLS 旧版 API
     const params = new URLSearchParams();
-    params.append('grant_type', 'client_credentials');
-    params.append('client_id', ALIYUN.accessKeyId);
-    params.append('client_secret', ALIYUN.accessKeySecret);
-
+    params.append('Action', 'CreateToken');
+    params.append('Version', '2019-02-28');
+    params.append('Format', 'JSON');
+    params.append('AccessKeyId', ALIYUN.accessKeyId);
+    params.append('SignatureMethod', 'HMAC-SHA1');
+    params.append('Timestamp', new Date().toISOString());
+    params.append('SignatureVersion', '1.0');
+    params.append('SignatureNonce', Math.random().toString());
+    
     const response = await axios.post(
       'https://nls-meta.cn-shanghai.aliyuncs.com/',
       params,
-      {
-        params: {
-          Action: 'CreateToken',
-          Version: '2019-02-28',
-          Format: 'JSON',
-          AccessKeyId: ALIYUN.accessKeyId,
-          SignatureMethod: 'HMAC-SHA1',
-          Timestamp: new Date().toISOString(),
-          SignatureVersion: '1.0',
-          SignatureNonce: Math.random().toString()
-        },
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-      }
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
     );
 
     if (response.data.Token?.Id) {
       tokenCache.token = response.data.Token.Id;
       tokenCache.expires = Date.now() + 24 * 60 * 60 * 1000;
-      console.log("Got access token:", tokenCache.token.substring(0, 10) + "...");
+      console.log("Token OK:", tokenCache.token.substring(0, 10) + "...");
       return tokenCache.token;
     }
+    console.log("Token response:", response.data);
   } catch (e) {
     console.error('Get token error:', e.message);
+    if (e.response) console.log('Response:', e.response.data);
   }
   return null;
 }
@@ -72,23 +69,18 @@ app.post('/chat', async (req, res) => {
   }
 });
 
-// 一句话识别 API
 app.post('/voice', async (req, res) => {
   try {
     const { audio } = req.body;
     if (!audio) return res.status(400).json({ error: 'No audio' });
 
-    // 解析音频
     const base64Data = audio.replace(/^data:audio\/\w+;base64,/, '');
     const audioBuffer = Buffer.from(base64Data, 'base64');
     console.log("Audio:", audioBuffer.length, "bytes");
 
-    // 获取 Access Token
     const token = await getAccessToken();
     if (!token) return res.status(500).json({ error: 'Failed to get token' });
-    console.log("Token OK");
 
-    // 调用一句话识别 API
     const response = await axios.post(
       'https://nls-gateway-cn-shanghai.aliyuncs.com/stream/v1/asr',
       audioBuffer,
@@ -101,16 +93,15 @@ app.post('/voice', async (req, res) => {
           enable_itn: 'true'
         },
         headers: {
-          'Content-Type': 'audio/wav;rate=16000',
+          'Content-Type': 'audio/wav',
           'X-NLS-Token': token
         },
         timeout: 30000
       }
     );
 
-    console.log("Aliyun response:", JSON.stringify(response.data));
-    const text = response.data?.result || '';
-    res.json({ text });
+    console.log("Aliyun:", JSON.stringify(response.data));
+    res.json({ text: response.data?.result || '' });
   } catch (e) {
     console.error('Error:', e.message);
     if (e.response) console.log('Response:', e.response.data);
