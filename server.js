@@ -1,56 +1,44 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
+// 你的 MiniMax API Key
 const API_KEY = 'sk-cp-RAsaqP2lsUH0DRgFFuOOr0U8gs1vwqU7tapLF6OXZ-oceDctsRhPLHI0b5BstIbCe4CS_2Z9JWSKT3SitkOtYFGR0DbzJE_FqAvaE9zpTUFV0-xjfBxemwc';
 
-const ALIYUN = {
-  accessKeyId: process.env.ALIYUN_ACCESS_KEY_ID || '',
-  accessKeySecret: process.env.ALIYUN_ACCESS_KEY_SECRET || '',
-  appkey: process.env.ALIYUN_APP_KEY || 'ms9j1Kk6QTlp31JV'
+// 百度语音识别配置
+const BAIDU = {
+  appid: '122506878',
+  apikey: 'dxG85ZQvZ7nY3bLMCHURcMZd',
+  secretkey: 'q955kcUcDALq8v6lNd5TEV0CX0AAGorx'
 };
 
 let tokenCache = { token: null, expires: 0 };
 
-// 正确的获取 Token 方式
-async function getAccessToken() {
+// 获取百度 access_token
+async function getBaiduToken() {
   if (tokenCache.token && Date.now() < tokenCache.expires) {
     return tokenCache.token;
   }
 
   try {
-    // 阿里云 NLS 旧版 API
-    const params = new URLSearchParams();
-    params.append('Action', 'CreateToken');
-    params.append('Version', '2019-02-28');
-    params.append('Format', 'JSON');
-    params.append('AccessKeyId', ALIYUN.accessKeyId);
-    params.append('SignatureMethod', 'HMAC-SHA1');
-    params.append('Timestamp', new Date().toISOString());
-    params.append('SignatureVersion', '1.0');
-    params.append('SignatureNonce', Math.random().toString());
-    
-    const response = await axios.post(
-      'https://nls-meta.cn-shanghai.aliyuncs.com/',
-      params,
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+    const response = await axios.get(
+      `https://openapi.baidu.com/oauth/2.0/token?grant_type=client_credentials&client_id=${encodeURIComponent(BAIDU.apikey)}&client_secret=${encodeURIComponent(BAIDU.secretkey)}`
     );
 
-    if (response.data.Token?.Id) {
-      tokenCache.token = response.data.Token.Id;
-      tokenCache.expires = Date.now() + 24 * 60 * 60 * 1000;
-      console.log("Token OK:", tokenCache.token.substring(0, 10) + "...");
+    if (response.data.access_token) {
+      tokenCache.token = response.data.access_token;
+      tokenCache.expires = Date.now() + (response.data.expires_in - 1000) * 1000;
+      console.log("Got Baidu token:", tokenCache.token.substring(0, 10) + "...");
       return tokenCache.token;
     }
-    console.log("Token response:", response.data);
+
+    console.error("Get token failed:", response.data);
   } catch (e) {
     console.error('Get token error:', e.message);
-    if (e.response) console.log('Response:', e.response.data);
   }
   return null;
 }
@@ -61,7 +49,12 @@ app.post('/chat', async (req, res) => {
     const response = await axios.post(
       'https://api.minimax.chat/v1/text/chatcompletion_v2',
       { model, messages },
-      { headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${API_KEY}` } }
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${API_KEY}`
+        }
+      }
     );
     res.json(response.data);
   } catch (e) {
@@ -69,6 +62,7 @@ app.post('/chat', async (req, res) => {
   }
 });
 
+// 百度一句话语音识别
 app.post('/voice', async (req, res) => {
   try {
     const { audio } = req.body;
@@ -78,35 +72,36 @@ app.post('/voice', async (req, res) => {
     const audioBuffer = Buffer.from(base64Data, 'base64');
     console.log("Audio:", audioBuffer.length, "bytes");
 
-    const token = await getAccessToken();
+    const token = await getBaiduToken();
     if (!token) return res.status(500).json({ error: 'Failed to get token' });
 
     const response = await axios.post(
-      'https://nls-gateway-cn-shanghai.aliyuncs.com/stream/v1/asr',
-      audioBuffer,
+      `https://vop.baidu.com/server_api`,
       {
-        params: {
-          appkey: ALIYUN.appkey,
-          token: token,
-          format: 'wav',
-          sample_rate: 16000,
-          enable_itn: 'true'
-        },
+        format: 'wav',
+        rate: 16000,
+        channel: 1,
+        cuid: 'bishe-cp-' + Math.random().toString(),
+        token: token,
+        speech: base64Data,
+        len: audioBuffer.length
+      },
+      {
         headers: {
-          'Content-Type': 'audio/wav',
-          'X-NLS-Token': token
-        },
-        timeout: 30000
+          'Content-Type': 'application/json'
+        }
       }
     );
 
-    console.log("Aliyun:", JSON.stringify(response.data));
-    res.json({ text: response.data?.result || '' });
+    console.log("Baidu response:", JSON.stringify(response.data));
+    const text = response.data.result.join(' ');
+    res.json({ text });
   } catch (e) {
-    console.error('Error:', e.message);
+    console.error('Voice error:', e.message);
     if (e.response) console.log('Response:', e.response.data);
     res.status(500).json({ error: e.message, text: '' });
   }
 });
 
-app.listen(3000, () => console.log('OK'));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Proxy running on port ${PORT}`));
