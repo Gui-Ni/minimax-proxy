@@ -54,11 +54,15 @@ app.post('/voice', async (req, res) => {
     const base64Data = audio.replace(/^data:audio\/\w+;base64,/, '');
     const audioBuffer = Buffer.from(base64Data, 'base64');
 
+    console.log("Received audio, size:", audioBuffer.length);
+
     // 使用 Deepgram Nova-2 模型 (支持中文)
     const formData = new FormData();
     formData.append('audio', audioBuffer, { filename: 'audio.webm', contentType: 'audio/webm' });
     formData.append('model', 'nova-2');
     formData.append('language', 'zh');
+    formData.append('punctuate', 'true');
+    formData.append('diarize', 'false');
 
     const response = await axios.post(
       'https://api.deepgram.com/v1/listen',
@@ -72,10 +76,15 @@ app.post('/voice', async (req, res) => {
       }
     );
 
+    console.log("Deepgram response:", JSON.stringify(response.data));
     const text = response.data.results?.channels[0]?.alternatives[0]?.transcript || '';
+    console.log("Transcribed text:", text);
     res.json({ text });
   } catch (error) {
     console.error('Voice Error:', error.message);
+    if (error.response) {
+      console.error('Response data:', error.response.data);
+    }
     res.status(500).json({ 
       error: error.message,
       text: ''
