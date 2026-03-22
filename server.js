@@ -9,14 +9,13 @@ app.use(express.json({ limit: '50mb' }));
 // 你的 MiniMax API Key
 const API_KEY = 'sk-cp-RAsaqP2lsUH0DRgFFuOOr0U8gs1vwqU7tapLF6OXZ-oceDctsRhPLHI0b5BstIbCe4CS_2Z9JWSKT3SitkOtYFGR0DbzJE_FqAvaE9zpTUFV0-xjfBxemwc';
 
-// 阿里云语音识别配置 (从环境变量读取)
+// 阿里云语音识别配置
 const ALIYUN = {
   accessKeyId: process.env.ALIYUN_ACCESS_KEY_ID || '',
   accessKeySecret: process.env.ALIYUN_ACCESS_KEY_SECRET || '',
   appkey: process.env.ALIYUN_APP_KEY || 'ms9j1Kk6QTlp31JV'
 };
 
-// 缓存 token
 let tokenCache = { token: null, expires: 0 };
 
 // 获取阿里云 token
@@ -26,18 +25,19 @@ async function getAliyunToken() {
   }
 
   try {
+    const params = new URLSearchParams();
+    params.append('Action', 'CreateToken');
+    params.append('Version', '2019-02-28');
+    params.append('Format', 'JSON');
+    params.append('AccessKeyId', ALIYUN.accessKeyId);
+    params.append('SignatureMethod', 'HMAC-SHA1');
+    params.append('Timestamp', new Date().toISOString());
+    params.append('SignatureVersion', '1.0');
+    params.append('SignatureNonce', Math.random().toString());
+
     const response = await axios.post(
       'https://nls-meta.cn-shanghai.aliyuncs.com/',
-      new URLSearchParams({
-        Action: 'CreateToken',
-        Version: '2019-02-28',
-        Format: 'JSON',
-        AccessKeyId: ALIYUN.accessKeyId,
-        SignatureMethod: 'HMAC-SHA1',
-        Timestamp: new Date().toISOString(),
-        SignatureVersion: '1.0',
-        SignatureNonce: Math.random().toString()
-      }),
+      params,
       {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
       }
@@ -46,6 +46,7 @@ async function getAliyunToken() {
     if (response.data.Token?.Id) {
       tokenCache.token = response.data.Token.Id;
       tokenCache.expires = Date.now() + 24 * 60 * 60 * 1000;
+      console.log("Got Aliyun token:", tokenCache.token);
       return tokenCache.token;
     }
     throw new Error('Failed to get token');
@@ -61,10 +62,7 @@ app.post('/chat', async (req, res) => {
     
     const response = await axios.post(
       'https://api.minimax.chat/v1/text/chatcompletion_v2',
-      {
-        model: model,
-        messages: messages
-      },
+      { model: model, messages: messages },
       {
         headers: {
           'Content-Type': 'application/json',
@@ -75,15 +73,12 @@ app.post('/chat', async (req, res) => {
     
     res.json(response.data);
   } catch (error) {
-    console.error('Error:', error.message);
-    res.status(500).json({ 
-      error: error.message,
-      details: error.response?.data 
-    });
+    console.error('Chat Error:', error.message);
+    res.status(500).json({ error: error.message });
   }
 });
 
-// 阿里云语音识别
+// 阿里云录音文件识别（非实时）
 app.post('/voice', async (req, res) => {
   try {
     const { audio } = req.body;
@@ -97,9 +92,10 @@ app.post('/voice', async (req, res) => {
 
     console.log("Received audio, size:", audioBuffer.length);
 
+    // 获取 token
     const token = await getAliyunToken();
-    console.log("Got token:", token);
 
+    // 使用录音文件识别 API
     const response = await axios.post(
       'https://nls-gateway-cn-shanghai.aliyuncs.com/stream/v1/asr',
       audioBuffer,
@@ -109,8 +105,7 @@ app.post('/voice', async (req, res) => {
           token: token,
           format: 'webm',
           sample_rate: 16000,
-          charset: 3,
-          enable_itn: true
+          enable_itn: 'true'
         },
         headers: {
           'Content-Type': 'audio/webm;codecs=opus',
@@ -120,18 +115,15 @@ app.post('/voice', async (req, res) => {
       }
     );
 
-    console.log("Aliyun response:", response.data);
+    console.log("Aliyun response:", JSON.stringify(response.data));
     const text = response.data?.result || '';
     res.json({ text });
   } catch (error) {
     console.error('Voice Error:', error.message);
     if (error.response) {
-      console.error('Response data:', error.response.data);
+      console.error('Response:', error.response.data);
     }
-    res.status(500).json({ 
-      error: error.message,
-      text: ''
-    });
+    res.status(500).json({ error: error.message, text: '' });
   }
 });
 
