@@ -7,7 +7,7 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
 // 你的 MiniMax API Key
-const API_KEY = 'sk-cp-RAsaqP2lsUH0DRgFFuOOr0U8gs1vwqU7tapLF6OXZ-oceDctsRhPLHI0b5BstIbCe4CS_2Z9JWSKT3SitkOtYFGR0DbzJE_FqAvaE9zpTUFV0-xjfBxemwc';
+const API_KEY = 'sk-cp-sUxSvmWUSMYeyiH29t4jl9uB98g_y4Icjvnvz9Z7kswPUsRS-J7xmxEwp-8gMWGtbo_9p8ZJ_WD15iRazNJo3iNKwvImd8K17nYtZlWk9e3ElGL1m14ycXo';
 
 // 百度语音识别配置
 const BAIDU = {
@@ -47,7 +47,7 @@ app.post('/chat', async (req, res) => {
   try {
     const { messages, model = 'abab6.5s-chat' } = req.body;
     const response = await axios.post(
-      'https://api.minimax.chat/v1/text/chatcompletion_v2',
+      'https://api.minimaxi.com/v1/text/chatcompletion_v2',
       { model, messages },
       {
         headers: {
